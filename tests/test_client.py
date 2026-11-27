@@ -161,6 +161,30 @@ def test_cook_session_tracker_uses_device_start_time():
     assert done.actual_seconds == 17.0
 
 
+def test_airfryer_control_commands():
+    sent: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content.decode())
+        sent.append(body["payload"])
+        return httpx.Response(200, json={"code": 0, "result": {"code": 0, "result": {}}})
+
+    with VeSyncClient(transport=httpx.MockTransport(handler)) as client:
+        client.token = "tok"
+        client.account_id = "acc1"
+        client.start_cook("cid1", "mod1", mode="Roast", cook_seconds=360, cook_temp=205)
+        client.set_cook_time("cid1", "mod1", 420)
+        client.set_temp_unit("cid1", "mod1", "C")
+        client.end_cook("cid1", "mod1")
+
+    assert [p["method"] for p in sent] == ["startCook", "setTimeOrTemp", "setTempUnit", "endCook"]
+    assert sent[0]["data"]["startAct"]["cookSetTime"] == 360
+    assert sent[0]["data"]["startAct"]["cookTemp"] == 205
+    assert sent[1]["data"] == {"cookSetTime": 420, "hasLinkage": False}
+    assert sent[2]["data"] == {"unit": "c"}
+    assert sent[3]["data"] == {}
+
+
 def test_normalize_program_key_and_devices_full():
     assert normalize_program_key("French fries") == "french_fries"
     assert normalize_program_key("AirFry") == "air_fry"

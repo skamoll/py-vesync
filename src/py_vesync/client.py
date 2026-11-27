@@ -293,6 +293,38 @@ class _VeSyncProtocolMixin:
             raise VeSyncAPIError(inner["code"], str(inner.get("msg", "bypass error")), inner)
         return dict(inner.get("result") or {}) if isinstance(inner, dict) else {}
 
+    def _start_cook_payload(
+        self,
+        *,
+        mode: str = "AirFry",
+        cook_seconds: int = 600,
+        cook_temp: int = 180,
+        temp_unit: str = "c",
+        recipe_id: int = 14,
+        recipe_name: str = "",
+        recipe_type: int = 3,
+        preheat_temp: int = 0,
+        shake_seconds: int = 0,
+        has_warm: bool = False,
+    ) -> dict[str, Any]:
+        return {
+            "accountId": self.account_id,
+            "mode": mode,
+            "recipeId": recipe_id,
+            "recipeType": recipe_type,
+            "recipeName": recipe_name,
+            "hasPreheat": 1 if preheat_temp > 0 else 0,
+            "hasWarm": has_warm,
+            "tempUnit": temp_unit.lower(),
+            "readyStart": True,
+            "startAct": {
+                "cookSetTime": cook_seconds,
+                "cookTemp": cook_temp,
+                "shakeTime": shake_seconds,
+                "preheatTemp": preheat_temp,
+            },
+        }
+
 
 class VeSyncClient(_VeSyncProtocolMixin):
     """Lightweight synchronous client for VeSync Cloud API v2."""
@@ -401,6 +433,46 @@ class VeSyncClient(_VeSyncProtocolMixin):
 
     def get_airfryer_presets(self, cid: str, config_module: str) -> dict[str, Any]:
         return self.bypass_v2(cid, config_module, "getPresetRecipe")
+
+    def end_cook(self, cid: str, config_module: str, *, chamber: int | None = None) -> dict[str, Any]:
+        data = {"chamber": chamber} if chamber is not None else {}
+        return self.bypass_v2(cid, config_module, "endCook", data)
+
+    def start_cook(
+        self,
+        cid: str,
+        config_module: str,
+        *,
+        mode: str = "AirFry",
+        cook_seconds: int = 600,
+        cook_temp: int = 180,
+        temp_unit: str = "c",
+        recipe_id: int = 14,
+        recipe_name: str = "",
+        recipe_type: int = 3,
+        preheat_temp: int = 0,
+        shake_seconds: int = 0,
+        has_warm: bool = False,
+    ) -> dict[str, Any]:
+        payload = self._start_cook_payload(
+            mode=mode,
+            cook_seconds=cook_seconds,
+            cook_temp=cook_temp,
+            temp_unit=temp_unit,
+            recipe_id=recipe_id,
+            recipe_name=recipe_name,
+            recipe_type=recipe_type,
+            preheat_temp=preheat_temp,
+            shake_seconds=shake_seconds,
+            has_warm=has_warm,
+        )
+        return self.bypass_v2(cid, config_module, "startCook", payload)
+
+    def set_cook_time(self, cid: str, config_module: str, cook_seconds: int, *, has_linkage: bool = False) -> dict[str, Any]:
+        return self.bypass_v2(cid, config_module, "setTimeOrTemp", {"cookSetTime": cook_seconds, "hasLinkage": has_linkage})
+
+    def set_temp_unit(self, cid: str, config_module: str, unit: str) -> dict[str, Any]:
+        return self.bypass_v2(cid, config_module, "setTempUnit", {"unit": unit.lower()})
 
     def get_cooking_history(self, cid: str, config_module: str, *, page_size: int = 10, index: str = "") -> dict[str, Any]:
         body = {
@@ -542,6 +614,46 @@ class AsyncVeSyncClient(_VeSyncProtocolMixin):
 
     async def get_airfryer_presets(self, cid: str, config_module: str) -> dict[str, Any]:
         return await self.bypass_v2(cid, config_module, "getPresetRecipe")
+
+    async def end_cook(self, cid: str, config_module: str, *, chamber: int | None = None) -> dict[str, Any]:
+        data = {"chamber": chamber} if chamber is not None else {}
+        return await self.bypass_v2(cid, config_module, "endCook", data)
+
+    async def start_cook(
+        self,
+        cid: str,
+        config_module: str,
+        *,
+        mode: str = "AirFry",
+        cook_seconds: int = 600,
+        cook_temp: int = 180,
+        temp_unit: str = "c",
+        recipe_id: int = 14,
+        recipe_name: str = "",
+        recipe_type: int = 3,
+        preheat_temp: int = 0,
+        shake_seconds: int = 0,
+        has_warm: bool = False,
+    ) -> dict[str, Any]:
+        payload = self._start_cook_payload(
+            mode=mode,
+            cook_seconds=cook_seconds,
+            cook_temp=cook_temp,
+            temp_unit=temp_unit,
+            recipe_id=recipe_id,
+            recipe_name=recipe_name,
+            recipe_type=recipe_type,
+            preheat_temp=preheat_temp,
+            shake_seconds=shake_seconds,
+            has_warm=has_warm,
+        )
+        return await self.bypass_v2(cid, config_module, "startCook", payload)
+
+    async def set_cook_time(self, cid: str, config_module: str, cook_seconds: int, *, has_linkage: bool = False) -> dict[str, Any]:
+        return await self.bypass_v2(cid, config_module, "setTimeOrTemp", {"cookSetTime": cook_seconds, "hasLinkage": has_linkage})
+
+    async def set_temp_unit(self, cid: str, config_module: str, unit: str) -> dict[str, Any]:
+        return await self.bypass_v2(cid, config_module, "setTempUnit", {"unit": unit.lower()})
 
     async def get_cooking_history(self, cid: str, config_module: str, *, page_size: int = 10, index: str = "") -> dict[str, Any]:
         body = {
