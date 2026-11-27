@@ -10,16 +10,21 @@ from typing import Any
 
 from .client import VeSyncAPIError, VeSyncClient, is_airfryer_running, normalize_program_key
 
+PAUSED_COOK_STATUSES = frozenset({"pause", "paused", "pullout"})
+
 
 @dataclass(slots=True)
 class CookSession:
-    """Measured cooking session between leaving standby and returning to standby."""
+    """Measured cooking session between leaving standby and finishing/stopping."""
 
     cid: str
     device_name: str
     started_at: str
     ended_at: str | None = None
+    end_reason: str | None = None
     actual_seconds: float | None = None
+    active_cooking_seconds: float = 0.0
+    paused_seconds: float = 0.0
     cook_mode: str = ""
     cook_mode_key: str | None = None
     program_name: str | None = None
@@ -32,6 +37,8 @@ class CookSession:
     last_temp: int | None = None
     statuses_seen: list[str] = field(default_factory=list)
     _start_mono: float = field(default=0.0, repr=False)
+    _last_mono: float = field(default=0.0, repr=False)
+    _last_status: str = field(default="", repr=False)
 
 
 class CookSessionTracker:
@@ -64,15 +71,29 @@ class CookSessionTracker:
         self.active_session.program_key = normalize_program_key(self.active_session.program_name)
         wp = entry.get("workParam") or {}
         if isinstance(wp, dict):
-            self.active_session.programmed_seconds = wp.get("workTime")
-            self.active_session.programmed_temp = wp.get("workTemp")
+            if self.active_session.programmed_seconds is None:
+                self.active_session.programmed_seconds = wp.get("workTime")
+            if self.active_session.programmed_temp is None:
+                self.active_session.programmed_temp = wp.get("workTemp")
 
     @property
     def current_elapsed_seconds(self) -> float:
-        """Live elapsed seconds for the ongoing cooking session, or 0.0 when idle."""
-        if self.active_session is None:
+        """Live active cooking seconds (excluding paused intervals), or 0.0 when idle."""
+        sess = self.active_session
+        if sess is None:
             return 0.0
-        return round(max(0.0, self._clock() - self.active_session._start_mono), 1)
+        delta = max(0.0, self._clock() - sess._last_mono)
+        extra = 0.0 if sess._last_status.lower() in PAUSED_COOK_STATUSES else delta
+        return round(sess.active_cooking_seconds + extra, 1)
+
+    @staticmethod
+    def _accumulate_interval(sess: CookSession, now_mono: float) -> None:
+        delta = max(0.0, now_mono - sess._last_mono)
+        if sess._last_status.lower() in PAUSED_COOK_STATUSES:
+            sess.paused_seconds = round(sess.paused_seconds + delta, 1)
+        else:
+            sess.active_cooking_seconds = round(sess.active_cooking_seconds + delta, 1)
+        sess._last_mono = now_mono
 
     def update(self, status: dict[str, Any]) -> tuple[bool, float, CookSession | None]:
         """Process one status snapshot; returns (is_running, recommended_interval_s, completed_session)."""
@@ -102,12 +123,21 @@ class CookSessionTracker:
                     last_temp=temp,
                     statuses_seen=[cook_status] if cook_status else [],
                     _start_mono=now_mono,
+                    _last_mono=now_mono,
+                    _last_status=cook_status,
                 )
             else:
                 sess = self.active_session
+                self._accumulate_interval(sess, now_mono)
+                sess._last_status = cook_status
                 if step_mode and not sess.program_name:
                     sess.program_name = step_mode
                     sess.program_key = normalize_program_key(step_mode)
+                if isinstance(step0, dict):
+                    if sess.programmed_seconds is None and step0.get("cookSetTime") is not None:
+                        sess.programmed_seconds = step0.get("cookSetTime")
+                    if sess.programmed_temp is None and step0.get("cookTemp") is not None:
+                        sess.programmed_temp = step0.get("cookTemp")
                 sess.last_temp = temp
                 if temp is not None and (sess.peak_temp is None or temp > sess.peak_temp):
                     sess.peak_temp = temp
@@ -118,8 +148,13 @@ class CookSessionTracker:
         completed: CookSession | None = None
         if self.active_session is not None:
             sess = self.active_session
+            self._accumulate_interval(sess, now_mono)
             sess.ended_at = now_iso
-            sess.actual_seconds = round(max(0.0, now_mono - sess._start_mono), 1)
+            sess.end_reason = cook_status or None
+            if cook_status.strip().lower() == "cookend" and sess.programmed_seconds is not None:
+                sess.actual_seconds = float(sess.programmed_seconds)
+            else:
+                sess.actual_seconds = round(sess.active_cooking_seconds, 1)
             sess.last_temp = temp
             self.active_session = None
             self.last_completed_session = sess

@@ -110,12 +110,37 @@ def test_cook_session_tracker_elapsed():
     now = [50.0]
     tracker = CookSessionTracker("cid1", clock=lambda: now[0])
     assert tracker.current_elapsed_seconds == 0.0
-    running, interval, done = tracker.update({"cookStatus": "cooking", "currentTemp": 190, "totalTimeRemaining": 200})
+    running, interval, done = tracker.update({
+        "cookStatus": "cooking",
+        "currentTemp": 190,
+        "totalTimeRemaining": 60,
+        "stepArray": [{"mode": "AirFry", "cookSetTime": 60, "cookTemp": 190}],
+    })
     assert running is True and interval == 5.0 and done is None
     now[0] = 62.5
     assert tracker.current_elapsed_seconds == 12.5
+    # Pause for 20s: must not add to active cooking time
+    tracker.update({"cookStatus": "pause", "currentTemp": 185, "totalTimeRemaining": 47})
+    now[0] = 82.5
+    assert tracker.current_elapsed_seconds == 12.5
+    # cookEnd uses exact programmed_seconds (60s)
     running, interval, done = tracker.update({"cookStatus": "cookEnd", "currentTemp": 77, "totalTimeRemaining": 0})
-    assert running is False and interval == 10.0 and done is not None and done.actual_seconds == 12.5
+    assert running is False and interval == 10.0 and done is not None
+    assert done.end_reason == "cookEnd"
+    assert done.paused_seconds == 20.0
+    assert done.actual_seconds == 60.0
+
+    # cookStop uses active cooking seconds (excluding pause)
+    now[0] = 100.0
+    tracker.update({"cookStatus": "cooking", "currentTemp": 190, "totalTimeRemaining": 300})
+    now[0] = 115.0
+    tracker.update({"cookStatus": "paused", "currentTemp": 180, "totalTimeRemaining": 285})
+    now[0] = 125.0
+    running, interval, done2 = tracker.update({"cookStatus": "cookStop", "currentTemp": 170, "totalTimeRemaining": 0})
+    assert running is False and done2 is not None
+    assert done2.end_reason == "cookStop"
+    assert done2.paused_seconds == 10.0
+    assert done2.actual_seconds == 15.0
 
 
 def test_normalize_program_key_and_devices_full():
