@@ -1,5 +1,6 @@
 import hashlib
 import json
+from datetime import datetime, timezone
 
 import httpx
 import pytest
@@ -141,6 +142,23 @@ def test_cook_session_tracker_elapsed():
     assert done2.end_reason == "cookStop"
     assert done2.paused_seconds == 10.0
     assert done2.actual_seconds == 15.0
+
+
+def test_cook_session_tracker_uses_device_start_time():
+    now_mono = [0.0]
+    wall_ts = [1795738725.0]  # 7s after startTime=1795738718
+    tracker = CookSessionTracker(
+        "cid1",
+        clock=lambda: now_mono[0],
+        wall_clock=lambda: datetime.fromtimestamp(wall_ts[0], tz=timezone.utc),
+    )
+    tracker.update({"cookStatus": "cooking", "startTime": 1795738718, "currentTemp": 150, "totalTimeRemaining": 53})
+    assert tracker.current_elapsed_seconds == 7.0
+    now_mono[0] = 10.0
+    wall_ts[0] = 1795738735.0
+    _, _, done = tracker.update({"cookStatus": "cookStop", "startTime": 1795738718, "currentTemp": 160, "totalTimeRemaining": 0})
+    assert done is not None
+    assert done.actual_seconds == 17.0
 
 
 def test_normalize_program_key_and_devices_full():

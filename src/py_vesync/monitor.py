@@ -39,6 +39,7 @@ class CookSession:
     _start_mono: float = field(default=0.0, repr=False)
     _last_mono: float = field(default=0.0, repr=False)
     _last_status: str = field(default="", repr=False)
+    _device_start_ts: int | None = field(default=None, repr=False)
 
 
 class CookSessionTracker:
@@ -83,6 +84,10 @@ class CookSessionTracker:
         if sess is None:
             return 0.0
         delta = max(0.0, self._clock() - sess._last_mono)
+        paused_now = sess.paused_seconds + (delta if sess._last_status.lower() in PAUSED_COOK_STATUSES else 0.0)
+        if sess._device_start_ts:
+            wall_epoch = self._wall_clock().timestamp()
+            return round(max(0.0, (wall_epoch - sess._device_start_ts) - paused_now), 1)
         extra = 0.0 if sess._last_status.lower() in PAUSED_COOK_STATUSES else delta
         return round(sess.active_cooking_seconds + extra, 1)
 
@@ -101,16 +106,24 @@ class CookSessionTracker:
         cook_status = str(status.get("cookStatus") or "")
         temp = status.get("currentTemp")
         now_mono = self._clock()
-        now_iso = self._wall_clock().isoformat(timespec="seconds")
+        now_wall = self._wall_clock()
+        now_iso = now_wall.isoformat(timespec="seconds")
+        step0 = (status.get("stepArray") or [None])[0]
+        raw_start = status.get("startTime")
+        device_start_ts = int(raw_start) if isinstance(raw_start, (int, float)) and raw_start > 0 else None
 
         if running:
-            step0 = (status.get("stepArray") or [None])[0]
             step_mode = step0.get("mode") if isinstance(step0, dict) else None
             if self.active_session is None:
+                started_at = (
+                    datetime.fromtimestamp(device_start_ts, tz=timezone.utc).astimezone().isoformat(timespec="seconds")
+                    if device_start_ts
+                    else now_iso
+                )
                 self.active_session = CookSession(
                     cid=self.cid,
                     device_name=self.device_name,
-                    started_at=now_iso,
+                    started_at=started_at,
                     cook_mode=str(status.get("cookMode") or ""),
                     cook_mode_key=normalize_program_key(status.get("cookMode")),
                     program_name=step_mode or None,
@@ -125,11 +138,19 @@ class CookSessionTracker:
                     _start_mono=now_mono,
                     _last_mono=now_mono,
                     _last_status=cook_status,
+                    _device_start_ts=device_start_ts,
                 )
             else:
                 sess = self.active_session
                 self._accumulate_interval(sess, now_mono)
                 sess._last_status = cook_status
+                if device_start_ts and sess._device_start_ts is None:
+                    sess._device_start_ts = device_start_ts
+                    sess.started_at = (
+                        datetime.fromtimestamp(device_start_ts, tz=timezone.utc)
+                        .astimezone()
+                        .isoformat(timespec="seconds")
+                    )
                 if step_mode and not sess.program_name:
                     sess.program_name = step_mode
                     sess.program_key = normalize_program_key(step_mode)
@@ -151,8 +172,18 @@ class CookSessionTracker:
             self._accumulate_interval(sess, now_mono)
             sess.ended_at = now_iso
             sess.end_reason = cook_status or None
-            if cook_status.strip().lower() == "cookend" and sess.programmed_seconds is not None:
-                sess.actual_seconds = float(sess.programmed_seconds)
+            cook_end_ts = step0.get("cookEndTime") if isinstance(step0, dict) else None
+            if cook_status.strip().lower() == "cookend":
+                if sess.programmed_seconds is not None and sess.paused_seconds == 0.0:
+                    sess.actual_seconds = float(sess.programmed_seconds)
+                elif sess._device_start_ts and isinstance(cook_end_ts, (int, float)) and cook_end_ts > sess._device_start_ts:
+                    sess.actual_seconds = round(max(0.0, (cook_end_ts - sess._device_start_ts) - sess.paused_seconds), 1)
+                elif sess.programmed_seconds is not None:
+                    sess.actual_seconds = float(sess.programmed_seconds)
+                else:
+                    sess.actual_seconds = round(sess.active_cooking_seconds, 1)
+            elif sess._device_start_ts:
+                sess.actual_seconds = round(max(0.0, (now_wall.timestamp() - sess._device_start_ts) - sess.paused_seconds), 1)
             else:
                 sess.actual_seconds = round(sess.active_cooking_seconds, 1)
             sess.last_temp = temp
