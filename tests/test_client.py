@@ -114,6 +114,8 @@ def test_cook_session_tracker_elapsed():
     assert running is True and interval == 5.0 and done is None
     now[0] = 62.5
     assert tracker.current_elapsed_seconds == 12.5
+    running, interval, done = tracker.update({"cookStatus": "cookEnd", "currentTemp": 77, "totalTimeRemaining": 0})
+    assert running is False and interval == 10.0 and done is not None and done.actual_seconds == 12.5
 
 
 def test_normalize_program_key_and_devices_full():

@@ -83,6 +83,8 @@ class CookSessionTracker:
         now_iso = self._wall_clock().isoformat(timespec="seconds")
 
         if running:
+            step0 = (status.get("stepArray") or [None])[0]
+            step_mode = step0.get("mode") if isinstance(step0, dict) else None
             if self.active_session is None:
                 self.active_session = CookSession(
                     cid=self.cid,
@@ -90,6 +92,10 @@ class CookSessionTracker:
                     started_at=now_iso,
                     cook_mode=str(status.get("cookMode") or ""),
                     cook_mode_key=normalize_program_key(status.get("cookMode")),
+                    program_name=step_mode or None,
+                    program_key=normalize_program_key(step_mode),
+                    programmed_seconds=step0.get("cookSetTime") if isinstance(step0, dict) else None,
+                    programmed_temp=step0.get("cookTemp") if isinstance(step0, dict) else None,
                     temp_unit=str(status.get("tempUnit") or "c"),
                     initial_temp=temp,
                     peak_temp=temp,
@@ -99,6 +105,9 @@ class CookSessionTracker:
                 )
             else:
                 sess = self.active_session
+                if step_mode and not sess.program_name:
+                    sess.program_name = step_mode
+                    sess.program_key = normalize_program_key(step_mode)
                 sess.last_temp = temp
                 if temp is not None and (sess.peak_temp is None or temp > sess.peak_temp):
                     sess.peak_temp = temp

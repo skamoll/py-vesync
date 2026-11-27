@@ -21,7 +21,7 @@ APP_ID = "eldodkfj"
 CLIENT_TYPE = "vesyncApp"
 CLIENT_VERSION = "VeSync 6.0.10"
 USER_AGENT = "VeSync/VeSync 6.0.10(Python;py-vesync)"
-STOPPED_COOK_STATUSES = frozenset({"standby", "off", "end", "finished", "idle", ""})
+STOPPED_COOK_STATUSES = frozenset({"standby", "cookend", "cookstop", "off", "end", "finished", "idle", ""})
 AUTH_ERROR_CODES = frozenset({-11000, -11200, -11201, -11202, -11212, -11260})
 
 
